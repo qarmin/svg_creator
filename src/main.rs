@@ -1,11 +1,11 @@
 use rand::prelude::*;
 use rand::{self, Rng};
 use std::fs::File;
-use std::io::prelude::*;
+use std::io::Write;
 use std::ops::Range;
 
 struct Childrens {
-    child_of: Option<u32>,
+    childrens: Vec<usize>,
     name: String,
     arguments: String,
 }
@@ -13,44 +13,54 @@ struct Childrens {
 fn main() {
     let mut rng = rand::thread_rng();
 
-    for svg_index in 0..1 {
+    for svg_index in 0..200 {
         let mut code = Vec::new();
-
-        code.push(Childrens {
-            child_of: None,
-            name: "svg".to_string(),
-            arguments: "width=\"100\" height=\"100\"".to_string(),
-        });
-
-        all_code.push("<svg >".to_string());
-
-        for _i in 0..rng.gen_range(Range { start: 1, end: 5 }) {
-            let mut start_string = format!("<{} ", types[types_index]);
-
-            for _j in 1..rng.gen_range(Range { start: 1, end: 20 }) {
-                let argument_string = format!(
-                    "{}=\"{}\" ",
-                    arguments.choose(&mut rand::thread_rng()).unwrap(),
-                    get_random_argument()
-                );
-                start_string.push_str(argument_string.as_str());
+        {
+            {
+                code.push(Childrens {
+                    childrens: vec![],
+                    name: "svg".to_string(),
+                    arguments: "width=\"100\" height=\"100\"".to_string(),
+                });
             }
-            start_string.push('>');
-            all_code.push(start_string);
-            all_code.push(format!("</{}>", types[types_index]));
+            for _i in 0..rng.gen_range(Range { start: 0, end: 50 }) {
+                let parent_index = rand::thread_rng().gen_range(0..code.len());
+
+                let mut values = "".to_string();
+
+                for _j in 0..rng.gen_range(Range { start: 0, end: 20 }) {
+                    values.push_str(format!("{}=\"{}\" ", ARGUMENTS.choose(&mut rand::thread_rng()).unwrap(), get_random_argument()).as_str());
+                }
+                let latest_index = code.len();
+                code[parent_index].childrens.push(latest_index);
+                code.push(Childrens {
+                    childrens: vec![],
+                    name: OPERATORS.choose(&mut rand::thread_rng()).unwrap().to_string(),
+                    arguments: values,
+                });
+            }
         }
 
-        all_code.push("</svg>".to_string());
+        let file_name = format!("/home/rafal/Desktop/SV/file{}.svg", svg_index);
 
-        for i in &all_code {
-            println!("{}", i);
-        }
-        let mut file =
-            File::create(format!("/home/rafal/Desktop/SV/file{}.svg", svg_index)).unwrap();
-        for line in all_code {
-            writeln!(file, "{}", line);
-        }
+        let mut file = File::create(&file_name).unwrap();
+        return_children_text(&code, &code[0], &mut file);
+
+        print!("echo \"{}\"; ", file_name);
+        print!("timeout 5 ");
+        println!("/home/rafal/thorvg/build/src/bin/svg2png/svg2png {}", file_name);
     }
+}
+fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File) {
+    // println!("<{} {}>", child.name, child.ARGUMENTS);
+    writeln!(file, "<{} {}>", child.name, child.arguments).unwrap();
+
+    for grant_child in &child.childrens {
+        return_children_text(code, &code[*grant_child], file);
+    }
+
+    // println!("</{}>", child.name);
+    writeln!(file, "</{}>", child.name).unwrap();
 }
 
 fn get_random_argument() -> String {
@@ -73,11 +83,7 @@ fn get_random_argument() -> String {
             if rand::thread_rng().gen_bool(0.5) {
                 color_string.push_str(rand::thread_rng().gen_range(0..10).to_string().as_str());
             } else {
-                color_string.push(
-                    *['a', 'b', 'c', 'd', 'e', 'f']
-                        .choose(&mut rand::thread_rng())
-                        .unwrap(),
-                );
+                color_string.push(*['a', 'b', 'c', 'd', 'e', 'f'].choose(&mut rand::thread_rng()).unwrap());
             }
         }
         return "".to_string();
@@ -91,6 +97,7 @@ fn get_random_argument() -> String {
     } else if number == 5 {
         // 2/4 numbers
         let mut numbers: [i32; 4] = [0; 4];
+        #[allow(clippy::needless_range_loop)]
         for i in 0..numbers.len() {
             numbers[i] = rand::thread_rng().gen_range(-300..300);
         }
@@ -99,11 +106,14 @@ fn get_random_argument() -> String {
         // Real number
         let number: f32 = rand::thread_rng().gen_range(-100f32..100f32);
         return number.to_string();
+    } else if number == 7 {
+        // Strange Values
+        return STRANGE_VALUES.choose(&mut rand::thread_rng()).unwrap().to_string();
     }
     unreachable!();
 }
 
-const strange_values: [&str; 16] = [
+const STRANGE_VALUES: [&str; 16] = [
     "auto",
     "SourceGraphic",
     "SourceAlpha",
@@ -122,7 +132,7 @@ const strange_values: [&str; 16] = [
     "max",
 ];
 
-const operators: [&str; 77] = [
+const OPERATORS: [&str; 77] = [
     "Element",
     "a",
     "altGlyph",
@@ -201,7 +211,7 @@ const operators: [&str; 77] = [
     "tspan",
     "use",
 ];
-const arguments: [&str; 84] = [
+const ARGUMENTS: [&str; 84] = [
     "Attributes",
     "URI",
     "a",
