@@ -13,7 +13,7 @@ struct Childrens {
 fn main() {
     let mut rng = rand::thread_rng();
 
-    for svg_index in 0..200 {
+    for svg_index in 0..2000 {
         let mut code = Vec::new();
         {
             {
@@ -47,7 +47,7 @@ fn main() {
         return_children_text(&code, &code[0], &mut file);
 
         print!("echo \"{}\"; ", file_name);
-        print!("timeout 5 ");
+        print!("timeout 2 ");
         println!("/home/rafal/thorvg/build/src/bin/svg2png/svg2png {}", file_name);
     }
 }
@@ -64,7 +64,7 @@ fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File) 
 }
 
 fn get_random_argument() -> String {
-    let number = rand::thread_rng().gen_range(0..7);
+    let number = rand::thread_rng().gen_range(0..9);
 
     if number == 0 {
         // Normal number
@@ -109,6 +109,15 @@ fn get_random_argument() -> String {
     } else if number == 7 {
         // Strange Values
         return STRANGE_VALUES.choose(&mut rand::thread_rng()).unwrap().to_string();
+    } else if number == 8 {
+        // n points
+
+        let mut text = "".to_string();
+        for _i in 1..rand::thread_rng().gen_range(1..20) {
+            text.push_str(format!("{},{} ", rand::thread_rng().gen_range(1..200), rand::thread_rng().gen_range(1..200)).as_str());
+        }
+
+        return text;
     }
     unreachable!();
 }
