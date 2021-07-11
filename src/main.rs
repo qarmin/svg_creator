@@ -12,8 +12,9 @@ struct Childrens {
 
 fn main() {
     let mut rng = rand::thread_rng();
+    let svg_tool = "/home/rafal/Downloads/thorvg/build/src/bin/svg2png/svg2png";
 
-    for svg_index in 0..2000 {
+    for svg_index in 0..5000 {
         let mut code = Vec::new();
         {
             {
@@ -23,12 +24,12 @@ fn main() {
                     arguments: "width=\"100\" height=\"100\"".to_string(),
                 });
             }
-            for _i in 0..rng.gen_range(Range { start: 0, end: 50 }) {
+            for _i in 0..rng.gen_range(Range { start: 0, end: 10 }) {
                 let parent_index = rand::thread_rng().gen_range(0..code.len());
 
                 let mut values = "".to_string();
 
-                for _j in 0..rng.gen_range(Range { start: 0, end: 20 }) {
+                for _j in 0..rng.gen_range(Range { start: 0, end: 10 }) {
                     values.push_str(format!("{}=\"{}\" ", ARGUMENTS.choose(&mut rand::thread_rng()).unwrap(), get_random_argument()).as_str());
                 }
                 let latest_index = code.len();
@@ -47,8 +48,8 @@ fn main() {
         return_children_text(&code, &code[0], &mut file);
 
         print!("echo \"{}\"; ", file_name);
-        print!("timeout 2 ");
-        println!("/home/rafal/thorvg/build/src/bin/svg2png/svg2png {}", file_name);
+        print!("timeout 10 ");
+        println!("{} {}", svg_tool, file_name);
     }
 }
 fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File) {
