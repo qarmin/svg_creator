@@ -5,10 +5,12 @@ use std::io::Write;
 use std::ops::Range;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use config::Config;
 use rand::prelude::*;
 use rand::{self, Rng};
+use rayon::prelude::*;
 
 struct Childrens {
     childrens: Vec<usize>,
@@ -26,6 +28,8 @@ struct Settings {
     max_number_of_arguments: u32,
     generate_invalid_items: bool,
     timeout_seconds: String,
+    debug_printing_non_broken: bool,
+    arguments: String,
 }
 
 fn load_settings() -> Settings {
@@ -43,119 +47,129 @@ fn load_settings() -> Settings {
         max_number_of_arguments: general_settings["max_number_of_arguments"].parse().unwrap(),
         generate_invalid_items: general_settings["generate_invalid_items"].parse().unwrap(),
         timeout_seconds: general_settings["timeout_seconds"].clone(),
+        debug_printing_non_broken: general_settings["debug_printing_non_broken"].parse().unwrap(),
+        arguments: general_settings["arguments"].clone(),
     }
 }
 
 fn main() {
     let settings = load_settings();
-    let mut rng = thread_rng();
 
-    for svg_index in 0..settings.number_generated_svg {
-        if svg_index % 100 == 0 {
-            println!("-- {}/{}", svg_index, settings.number_generated_svg);
+    let atomic = AtomicU32::new(0);
+
+    (0..settings.number_generated_svg).into_par_iter().for_each(|_| {
+        let curr_idx = atomic.fetch_add(1, Ordering::Relaxed);
+        if curr_idx % 100 == 0 {
+            println!("-- {}/{}", curr_idx, settings.number_generated_svg);
         }
-        let mut code = Vec::new();
-        {
-            {
-                code.push(Childrens {
-                    childrens: vec![],
-                    name: "svg".to_string(),
-                    arguments: "width=\"1\" height=\"1\"".to_string(),
-                });
-            }
-            for _i in 0..rng.gen_range(Range {
-                start: 0,
-                end: settings.max_number_of_operators,
-            }) {
-                let parent_index = thread_rng().gen_range(0..code.len());
+        let mut rng = thread_rng();
 
-                let mut values = "".to_string();
-
-                let mut args = Vec::new();
-                for _j in 0..rng.gen_range(Range {
-                    start: 0,
-                    end: settings.max_number_of_arguments,
-                }) {
-                    let arg = ARGUMENTS.choose(&mut thread_rng()).unwrap();
-                    // ThorVG leaks memory when two same arguments are used e.g. <image p=1 p=2>
-                    if !args.contains(arg) {
-                        args.push(arg);
-                        values.push_str(format!("{}=\"{}\" ", arg, get_random_argument()).as_str());
-                    }
-                }
-                let latest_index = code.len();
-                code[parent_index].childrens.push(latest_index);
-                code.push(Childrens {
-                    childrens: vec![],
-                    name: OPERATORS.choose(&mut thread_rng()).unwrap().to_string(),
-                    arguments: values,
-                });
-            }
-        }
-
-        let file_name = format!("{}/{}.svg", settings.temp_files_save_location, svg_index);
+        let code = generate_svg_file(&settings, &mut rng);
+        let file_name = format!("{}/{}.svg", settings.temp_files_save_location, curr_idx);
 
         let mut file = File::create(&file_name).unwrap();
-        return_children_text(&code, &code[0], &mut file, &settings);
+        return_children_text(&code, &code[0], &mut file, &settings, &mut rng);
+        test_svg(&settings, &file_name);
+    });
+}
+fn generate_svg_file(settings: &Settings, rng: &mut ThreadRng) -> Vec<Childrens> {
+    let mut code = Vec::new();
+    code.push(Childrens {
+        childrens: vec![],
+        name: "svg".to_string(),
+        arguments: "width=\"1\" height=\"1\"".to_string(),
+    });
 
-        let out = Command::new("timeout")
-            .arg("-v")
-            .arg(&settings.timeout_seconds)
-            .arg(&settings.svg_tool_path)
-            .arg(&file_name)
-            .arg("-r")
-            .arg(&format!("{}x{}", settings.image_size, settings.image_size))
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap()
-            .wait_with_output()
-            .unwrap();
+    for _i in 0..rng.gen_range(Range {
+        start: 0,
+        end: settings.max_number_of_operators,
+    }) {
+        let parent_index = rng.gen_range(0..code.len());
 
-        let err = String::from_utf8(out.stderr).unwrap();
-        let out = String::from_utf8(out.stdout).unwrap();
+        let mut values = "".to_string();
 
-        let mut is_broken_file = false;
-        const TIMEOUT_MSG: &str = "timeout: sending signal";
-        const RUNTIME_MSG: &str = "runtime error";
-        const SANITIZER_MSG: &str = "Sanitizer";
-        if err.contains(TIMEOUT_MSG) || out.contains(TIMEOUT_MSG) {
-            println!("FOUND TIMEOUT");
-            is_broken_file = true;
-        } else if err.contains(RUNTIME_MSG) || out.contains(RUNTIME_MSG) {
-            println!("FOUND RUNTIME ERROR");
-            is_broken_file = true;
-        } else if err.contains(SANITIZER_MSG) || out.contains(SANITIZER_MSG) {
-            println!("FOUND SANITIZER");
-            is_broken_file = true;
-        } else {
-            println!("NOT FOUND ANYTHING:\nOUT: {out}\nERR: {err}");
+        let mut args = Vec::new();
+        for _j in 0..rng.gen_range(Range {
+            start: 0,
+            end: settings.max_number_of_arguments,
+        }) {
+            let arg = ARGUMENTS.choose(rng).unwrap();
+            // ThorVG leaks memory when two same arguments are used e.g. <image p=1 p=2>
+            if !args.contains(arg) {
+                args.push(arg);
+                values.push_str(format!("{}=\"{}\" ", arg, get_random_argument(rng)).as_str());
+            }
         }
+        let latest_index = code.len();
+        code[parent_index].childrens.push(latest_index);
+        code.push(Childrens {
+            childrens: vec![],
+            name: OPERATORS.choose(rng).unwrap().to_string(),
+            arguments: values,
+        });
+    }
+    code
+}
 
-        if is_broken_file {
-            let old_fn = Path::new(&file_name).file_name().unwrap().to_str().unwrap().to_string();
-            let full_name = format!("{}/{old_fn}", settings.found_broken_files_save_location);
-            fs::copy(&file_name, &full_name).unwrap();
-            println!("Found broken file {file_name}\nOUT: {out}\nERR: {err}");
+fn test_svg(settings: &Settings, file_name: &str) {
+    let out = Command::new("timeout")
+        .arg("-v")
+        .arg(&settings.timeout_seconds)
+        .arg(&settings.svg_tool_path)
+        .args(
+            settings
+                .arguments
+                .split(" ")
+                .map(|f| f.replace("{FILE}", &file_name).replace("{SIZE}", &settings.image_size.to_string())),
+        )
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+
+    let err = String::from_utf8(out.stderr).unwrap();
+    let out = String::from_utf8(out.stdout).unwrap();
+
+    let mut is_broken_file = false;
+    const TIMEOUT_MSG: &str = "timeout: sending signal";
+    const RUNTIME_MSG: &str = "runtime error";
+    const SANITIZER_MSG: &str = "Sanitizer";
+    #[allow(clippy::if_same_then_else)]
+    if err.contains(TIMEOUT_MSG) || out.contains(TIMEOUT_MSG) {
+        is_broken_file = true;
+    } else if err.contains(RUNTIME_MSG) || out.contains(RUNTIME_MSG) {
+        is_broken_file = true;
+    } else if err.contains(SANITIZER_MSG) || out.contains(SANITIZER_MSG) {
+        is_broken_file = true;
+    } else if settings.debug_printing_non_broken {
+        let new_out = out
+            .lines()
+            .filter(|e| !["Generated PNG", "Error: Couldn't load image"].iter().any(|f| e.starts_with(f)))
+            .collect::<Vec<_>>();
+        if !new_out.is_empty() || !err.is_empty() {
+            println!("Non broken\nOUT: {out}\nERR: {err}");
         }
+    }
 
-        // print!("echo \"{}\"; ", file_name);
-        // print!("timeout 10 ");
-        // println!("{} {} -r {}x{}", svg_tool, file_name, IMAGE_SIZE, IMAGE_SIZE);
+    if is_broken_file {
+        let old_fn = Path::new(&file_name).file_name().unwrap().to_str().unwrap().to_string();
+        let full_name = format!("{}/{old_fn}", settings.found_broken_files_save_location);
+        fs::copy(file_name, full_name).unwrap();
+        println!("Found broken file {file_name}\nOUT: {out}\nERR: {err}");
     }
 }
 
-fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File, settings: &Settings) {
+fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File, settings: &Settings, rng: &mut ThreadRng) {
     // println!("<{} {}>", child.name, child.ARGUMENTS);
-    if settings.generate_invalid_items
-        && (thread_rng().gen_range(0..(settings.max_number_of_operators * settings.max_number_of_arguments / 1000)) == 0)
-    {
+    if settings.generate_invalid_items && (rng.gen_range(0..(settings.max_number_of_operators * settings.max_number_of_arguments / 1000) + 1) == 0) {
         let mut rar = format!("<{} {}>", child.name, child.arguments);
-        if thread_rng().gen_bool(0.25) {
+        if rng.gen_bool(0.25) {
             rar = rar.replace('<', "");
-        } else if thread_rng().gen_bool(0.3) {
+        } else if rng.gen_bool(0.3) {
             rar = rar.replace('>', "");
-        } else if thread_rng().gen_bool(0.5) {
+        } else if rng.gen_bool(0.5) {
             rar = rar.replace('=', " ");
         } else {
             rar = rar.replace('>', "");
@@ -167,36 +181,36 @@ fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File, 
     }
 
     for grant_child in &child.childrens {
-        return_children_text(code, &code[*grant_child], file, settings);
+        return_children_text(code, &code[*grant_child], file, settings, rng);
     }
 
     // println!("</{}>", child.name);
     writeln!(file, "</{}>", child.name).unwrap();
 }
 
-fn get_random_argument() -> String {
-    let number = thread_rng().gen_range(0..9);
+fn get_random_argument(rng: &mut ThreadRng) -> String {
+    let number = rng.gen_range(0..9);
 
     if number == 0 {
         // Normal number
-        let num = thread_rng().gen_range(-1000..1000);
+        let num = rng.gen_range(-1000..1000);
         return num.to_string();
     } else if number == 1 {
         // Number with em or px
-        let choosed_end = ["px", "em"].choose(&mut thread_rng()).unwrap();
+        let choosed_end = ["px", "em"].choose(rng).unwrap();
 
-        let num = thread_rng().gen_range(-1000..1000);
+        let num = rng.gen_range(-1000..1000);
         return format!("{}{}", num, choosed_end);
     } else if number == 2 {
         // Color
         let mut color_string = "#".to_string();
         for _i in 0..6 {
-            if thread_rng().gen_bool(0.5) {
-                color_string.push_str(thread_rng().gen_range(0..10).to_string().as_str());
-            } else if thread_rng().gen_bool(0.99) {
-                color_string.push(*['a', 'b', 'c', 'd', 'e', 'f'].choose(&mut thread_rng()).unwrap());
-            } else if thread_rng().gen_bool(0.99) {
-                color_string.push(thread_rng().gen_range::<u8, Range<u8>>(0..255) as char);
+            if rng.gen_bool(0.5) {
+                color_string.push_str(rng.gen_range(0..10).to_string().as_str());
+            } else if rng.gen_bool(0.99) {
+                color_string.push(*['a', 'b', 'c', 'd', 'e', 'f'].choose(rng).unwrap());
+            } else if rng.gen_bool(0.99) {
+                color_string.push(rng.gen_range::<u8, Range<u8>>(0..255) as char);
             }
         }
         return "".to_string();
@@ -205,29 +219,29 @@ fn get_random_argument() -> String {
         return "".to_string();
     } else if number == 4 {
         // Percent
-        let num = thread_rng().gen_range(-300..300);
+        let num = rng.gen_range(-300..300);
         return format!("{}%", num);
     } else if number == 5 {
         // 2/4 numbers
         let mut numbers: [i32; 4] = [0; 4];
         #[allow(clippy::needless_range_loop)]
         for i in 0..numbers.len() {
-            numbers[i] = thread_rng().gen_range(-300..300);
+            numbers[i] = rng.gen_range(-300..300);
         }
         return "".to_string();
     } else if number == 6 {
         // Real number
-        let number: f32 = thread_rng().gen_range(-100f32..100f32);
+        let number: f32 = rng.gen_range(-100f32..100f32);
         return number.to_string();
     } else if number == 7 {
         // Strange Values
-        return STRANGE_VALUES.choose(&mut thread_rng()).unwrap().to_string();
+        return STRANGE_VALUES.choose(rng).unwrap().to_string();
     } else if number == 8 {
         // n points
 
         let mut text = "".to_string();
-        for _i in 1..thread_rng().gen_range(1..20) {
-            text.push_str(format!("{},{} ", thread_rng().gen_range(1..200), thread_rng().gen_range(1..200)).as_str());
+        for _i in 1..rng.gen_range(1..20) {
+            text.push_str(format!("{},{} ", rng.gen_range(1..200), rng.gen_range(1..200)).as_str());
         }
 
         return text;
