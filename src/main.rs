@@ -72,6 +72,7 @@ fn main() {
         test_svg(&settings, &file_name);
     });
 }
+
 fn generate_svg_file(settings: &Settings, rng: &mut ThreadRng) -> Vec<Childrens> {
     let mut code = Vec::new();
     code.push(Childrens {
@@ -129,26 +130,31 @@ fn test_svg(settings: &Settings, file_name: &str) {
         .wait_with_output()
         .unwrap();
 
-    let err = String::from_utf8(out.stderr).unwrap();
-    let out = String::from_utf8(out.stdout).unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let out = String::from_utf8_lossy(&out.stdout).to_string();
 
-    let mut is_broken_file = false;
-    const TIMEOUT_MSG: &str = "timeout: sending signal";
-    const RUNTIME_MSG: &str = "runtime error";
-    const SANITIZER_MSG: &str = "Sanitizer";
-    #[allow(clippy::if_same_then_else)]
-    if err.contains(TIMEOUT_MSG) || out.contains(TIMEOUT_MSG) {
-        is_broken_file = true;
-    } else if err.contains(RUNTIME_MSG) || out.contains(RUNTIME_MSG) {
-        is_broken_file = true;
-    } else if err.contains(SANITIZER_MSG) || out.contains(SANITIZER_MSG) {
-        is_broken_file = true;
-    } else if settings.debug_printing_non_broken {
+    let is_broken_file = [
+        "timeout: sending signal", "runtime error", "Sanitizer", "RUST_BACKTRACE", "Inkscape encountered an internal error",
+        "the monitored command dumped core",
+    ]
+    .iter()
+    .any(|f| err.contains(f) || out.contains(f));
+
+    if !is_broken_file && settings.debug_printing_non_broken {
         let new_out = out
             .lines()
-            .filter(|e| !["Generated PNG", "Error: Couldn't load image"].iter().any(|f| e.starts_with(f)))
+            .filter(|e| !(["Generated PNG", "Error: Couldn't load image"].iter().any(|f| e.starts_with(f)) || e.trim().is_empty()))
             .collect::<Vec<_>>();
-        if !new_out.is_empty() || !err.is_empty() {
+        let new_err = err
+            .lines()
+            .filter(|e| {
+                !(["Error reading SVG", "Error: an unknown namespace", "Error: SVG data parsing"]
+                    .iter()
+                    .any(|f| e.starts_with(f))
+                    || e.trim().is_empty())
+            })
+            .collect::<Vec<_>>();
+        if !new_out.is_empty() || !new_err.is_empty() {
             println!("Non broken\nOUT: {out}\nERR: {err}");
         }
     }
