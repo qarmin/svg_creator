@@ -1,0 +1,10 @@
+[general]
+svg_tool_path = "/home/rafal/test/thorvg/build/src/bin/svg2png/svg2png"
+temp_files_save_location = "/home/rafal/Desktop/SVG/BrokenCreated"
+found_broken_files_save_location = "/home/rafal/Desktop/SVG/BrokenFound"
+image_size = 10
+number_generated_svg = 2000
+max_number_of_operators = 20
+max_number_of_arguments = 20000
+generate_invalid_items = false
+timeout_seconds = 5
