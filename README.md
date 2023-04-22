@@ -14,5 +14,8 @@ Tweak settings, you can change number of executed loops
 - second - how much of things like `<image>` or `<path>` will be inside files(this is random value inside some range)
 - third - how much arguments things like `image` will have e.g. `<image d="4em" source="32">`
 
+## TODO
+Add mode to verify SVG files, to find even more used things
+
 ## License
 MIT

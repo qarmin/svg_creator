@@ -1,37 +1,58 @@
-use rand::prelude::*;
-use rand::{self, Rng};
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::ops::Range;
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+use rand::prelude::*;
+use rand::{self, Rng};
+
+const WHERE_SAVE: &str = "/home/rafal/Desktop/SVG/BrokenCreated";
+const WHERE_SAVE_BROKEN_FILES: &str = "/home/rafal/Desktop/SVG/BrokenFound";
 
 struct Childrens {
     childrens: Vec<usize>,
     name: String,
     arguments: String,
 }
+
 const INVALID: bool = true;
+const HOW_MUCH_GENERATE_SVG: i32 = 2000;
+const MAX_NUMBER_OF_OPERATORS: i32 = 20;
+const MAX_NUMBER_OF_ARGUMENTS: i32 = 20000;
+const IMAGE_SIZE: i32 = 1;
 
 fn main() {
     let mut rng = rand::thread_rng();
-    let svg_tool = "/home/rafal/Downloads/thorvg/build/src/bin/svg2png/svg2png";
+    let svg_tool = "/home/rafal/test/thorvg/build/src/bin/svg2png/svg2png";
 
-    for svg_index in 0..5000 {
+    for svg_index in 0..HOW_MUCH_GENERATE_SVG {
+        if svg_index % 100 == 0 {
+            println!("-- {}/{}", svg_index, HOW_MUCH_GENERATE_SVG);
+        }
         let mut code = Vec::new();
         {
             {
                 code.push(Childrens {
                     childrens: vec![],
                     name: "svg".to_string(),
-                    arguments: "width=\"100\" height=\"100\"".to_string(),
+                    arguments: "width=\"1\" height=\"1\"".to_string(),
                 });
             }
-            for _i in 0..rng.gen_range(Range { start: 0, end: 30 }) {
+            for _i in 0..rng.gen_range(Range {
+                start: 0,
+                end: MAX_NUMBER_OF_OPERATORS,
+            }) {
                 let parent_index = rand::thread_rng().gen_range(0..code.len());
 
                 let mut values = "".to_string();
 
                 let mut args = Vec::new();
-                for _j in 0..rng.gen_range(Range { start: 0, end: 10 }) {
+                for _j in 0..rng.gen_range(Range {
+                    start: 0,
+                    end: MAX_NUMBER_OF_ARGUMENTS,
+                }) {
                     let arg = ARGUMENTS.choose(&mut rand::thread_rng()).unwrap();
                     // ThorVG leaks memory when two same arguments are used e.g. <image p=1 p=2>
                     if !args.contains(arg) {
@@ -49,23 +70,71 @@ fn main() {
             }
         }
 
-        let file_name = format!("/home/rafal/Desktop/SV/file{}.svg", svg_index);
+        let file_name = format!("{}/{}.svg", WHERE_SAVE, svg_index);
 
         let mut file = File::create(&file_name).unwrap();
         return_children_text(&code, &code[0], &mut file);
 
-        print!("echo \"{}\"; ", file_name);
-        print!("timeout 10 ");
-        println!("{} {}", svg_tool, file_name);
+        let timeout_seconds = "5";
+        let out = Command::new("timeout")
+            .arg("-v")
+            .arg(timeout_seconds)
+            .arg(svg_tool)
+            .arg(&file_name)
+            .arg("-r")
+            .arg(&format!("{IMAGE_SIZE}x{IMAGE_SIZE}"))
+            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+
+        let err = String::from_utf8(out.stderr).unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+
+        let mut is_broken_file = false;
+        const TIMEOUT_MSG: &str = "timeout: sending signal";
+        const RUNTIME_MSG: &str = "runtime error";
+        const SANITIZER_MSG: &str = "Sanitizer";
+        if err.contains(TIMEOUT_MSG) || out.contains(TIMEOUT_MSG) {
+            println!("FOUND TIMEOUT");
+            is_broken_file = true;
+        } else if err.contains(RUNTIME_MSG) || out.contains(RUNTIME_MSG) {
+            println!("FOUND RUNTIME ERROR");
+            is_broken_file = true;
+        } else if err.contains(SANITIZER_MSG) || out.contains(SANITIZER_MSG) {
+            println!("FOUND SANITIZER");
+            is_broken_file = true;
+        } else {
+            println!("NOT FOUND ANYTHING:\nOUT: {out}\nERR: {err}");
+        }
+
+        if is_broken_file {
+            let old_fn = Path::new(&file_name).file_name().unwrap().to_str().unwrap().to_string();
+            let full_name = format!("{WHERE_SAVE_BROKEN_FILES}/{old_fn}");
+            fs::copy(&file_name, &full_name).unwrap();
+            println!("Found broken file {file_name}\nOUT: {out}\nERR: {err}");
+        }
+
+        // print!("echo \"{}\"; ", file_name);
+        // print!("timeout 10 ");
+        // println!("{} {} -r {}x{}", svg_tool, file_name, IMAGE_SIZE, IMAGE_SIZE);
     }
 }
+
 fn return_children_text(code: &[Childrens], child: &Childrens, file: &mut File) {
     // println!("<{} {}>", child.name, child.ARGUMENTS);
-    if INVALID && (rand::thread_rng().gen_range(0..100) == 0) {
+    if INVALID && (rand::thread_rng().gen_range(0..(MAX_NUMBER_OF_OPERATORS * MAX_NUMBER_OF_ARGUMENTS / 1000)) == 0) {
         let mut rar = format!("<{} {}>", child.name, child.arguments);
-        if rand::thread_rng().gen_bool(0.5) {
+        if rand::thread_rng().gen_bool(0.25) {
             rar = rar.replace("<", "");
+        } else if rand::thread_rng().gen_bool(0.3) {
+            rar = rar.replace(">", "");
+        } else if rand::thread_rng().gen_bool(0.5) {
+            rar = rar.replace("=", " ");
         } else {
+            rar = rar.replace(">", "");
             rar = rar.replace("<", "");
         }
         writeln!(file, "{}", rar).unwrap();
@@ -100,8 +169,10 @@ fn get_random_argument() -> String {
         for _i in 0..6 {
             if rand::thread_rng().gen_bool(0.5) {
                 color_string.push_str(rand::thread_rng().gen_range(0..10).to_string().as_str());
-            } else {
+            } else if rand::thread_rng().gen_bool(0.99) {
                 color_string.push(*['a', 'b', 'c', 'd', 'e', 'f'].choose(&mut rand::thread_rng()).unwrap());
+            } else if rand::thread_rng().gen_bool(0.99) {
+                color_string.push(rand::thread_rng().gen_range::<u8, Range<u8>>(0..255) as char);
             }
         }
         return "".to_string();
