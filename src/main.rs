@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
+use std::fs::{create_dir_all, remove_dir_all, File};
 use std::io::Write;
 use std::ops::Range;
 use std::path::Path;
@@ -30,6 +30,7 @@ struct Settings {
     timeout_seconds: String,
     debug_printing_non_broken: bool,
     arguments: String,
+    timeout_entire_process: u64,
 }
 
 fn load_settings() -> Settings {
@@ -49,28 +50,39 @@ fn load_settings() -> Settings {
         timeout_seconds: general_settings["timeout_seconds"].clone(),
         debug_printing_non_broken: general_settings["debug_printing_non_broken"].parse().unwrap(),
         arguments: general_settings["arguments"].clone(),
+        timeout_entire_process: general_settings["timeout_entire_process"].parse().unwrap(),
     }
 }
 
 fn main() {
     let settings = load_settings();
-
     let atomic = AtomicU32::new(0);
 
-    (0..settings.number_generated_svg).into_par_iter().for_each(|_| {
-        let curr_idx = atomic.fetch_add(1, Ordering::Relaxed);
-        if curr_idx % 100 == 0 {
-            println!("-- {}/{}", curr_idx, settings.number_generated_svg);
-        }
-        let mut rng = thread_rng();
+    let _ = create_dir_all(&settings.found_broken_files_save_location);
 
-        let code = generate_svg_file(&settings, &mut rng);
-        let file_name = format!("{}/{}.svg", settings.temp_files_save_location, curr_idx);
+    let start_time = std::time::Instant::now();
+    let mut iteration = 0;
+    while start_time.elapsed().as_secs() < settings.timeout_entire_process {
+        iteration += 1;
+        println!("Starting new iteration - {iteration}");
+        let _ = remove_dir_all(&settings.temp_files_save_location);
+        let _ = create_dir_all(&settings.temp_files_save_location);
 
-        let mut file = File::create(&file_name).unwrap();
-        return_children_text(&code, &code[0], &mut file, &settings, &mut rng);
-        test_svg(&settings, &file_name);
-    });
+        (0..settings.number_generated_svg).into_par_iter().for_each(|_| {
+            let curr_idx = atomic.fetch_add(1, Ordering::Relaxed);
+            if curr_idx % 100 == 0 {
+                println!("-- {}/{}", curr_idx, settings.number_generated_svg);
+            }
+            let mut rng = thread_rng();
+
+            let code = generate_svg_file(&settings, &mut rng);
+            let file_name = format!("{}/{}.svg", settings.temp_files_save_location, random::<u64>());
+
+            let mut file = File::create(&file_name).unwrap();
+            return_children_text(&code, &code[0], &mut file, &settings, &mut rng);
+            test_svg(&settings, &file_name);
+        });
+    }
 }
 
 fn generate_svg_file(settings: &Settings, rng: &mut ThreadRng) -> Vec<Childrens> {
@@ -130,15 +142,10 @@ fn test_svg(settings: &Settings, file_name: &str) {
         .wait_with_output()
         .unwrap();
 
+    let is_broken_file = !out.status.success();
+
     let err = String::from_utf8_lossy(&out.stderr).to_string();
     let out = String::from_utf8_lossy(&out.stdout).to_string();
-
-    let is_broken_file = [
-        "timeout: sending signal", "runtime error", "Sanitizer", "RUST_BACKTRACE", "Inkscape encountered an internal error",
-        "the monitored command dumped core",
-    ]
-    .iter()
-    .any(|f| err.contains(f) || out.contains(f));
 
     if !is_broken_file && settings.debug_printing_non_broken {
         let new_out = out
@@ -161,9 +168,22 @@ fn test_svg(settings: &Settings, file_name: &str) {
 
     if is_broken_file {
         let old_fn = Path::new(&file_name).file_name().unwrap().to_str().unwrap().to_string();
+        let text_fn = old_fn.replace(".svg", ".txt");
         let full_name = format!("{}/{old_fn}", settings.found_broken_files_save_location);
         fs::copy(file_name, full_name).unwrap();
-        println!("Found broken file {file_name}\nOUT: {out}\nERR: {err}");
+        let mut all = format!("{}\n{}", out, err);
+
+        if all.len() > 10000 {
+            all.truncate(500);
+        }
+
+        if all.matches("AddressSanitizer:DEADLYSIGNAL").count() > 3 {
+            all = "INIFINITE, ADDRESS SANITIZER\n".to_string();
+            println!("Found broken file {file_name}\nINFINITE LOOP");
+        } else {
+            println!("Found broken file {file_name}\n{all}");
+        }
+        fs::write(format!("{}/{text_fn}", settings.found_broken_files_save_location), all).unwrap();
     }
 }
 

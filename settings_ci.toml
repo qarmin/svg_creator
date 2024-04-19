@@ -1,17 +1,17 @@
 [general]
-temp_files_save_location = "/home/rafal/Desktop/SVG/BrokenCreated"
-found_broken_files_save_location = "/home/rafal/Desktop/SVG/BrokenFound"
+temp_files_save_location = "BrokenCreated"
+found_broken_files_save_location = "BrokenFound"
 image_size = 1
-number_generated_svg = 20
+number_generated_svg = 100
 max_number_of_operators = 500
 max_number_of_arguments = 20
 generate_invalid_items = false
 timeout_seconds = 5
 debug_printing_non_broken = false
-timeout_entire_process = 10
+timeout_entire_process = 14400
 
 
-svg_tool_path = "/home/rafal/test/thorvg/build/src/tools/svg2png/svg2png"
+svg_tool_path = "./thorvg/build/src/tools/svg2png/svg2png"
 arguments = "{FILE} -r {SIZE}x{SIZE}"
 #svg_tool_path = "resvg"
 #arguments = "{FILE} -w {SIZE} -h {SIZE}"
